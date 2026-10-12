@@ -3140,13 +3140,13 @@ local visualTimer = 0
 
 local lastScooter
 
-local lastSpinState = false
-
 local spinAngle = 0
 
 local spinBaseRotation
 
-local spinRoot
+local spinScooter
+
+local transformWasActive = false
 
 local originalCollisions = setmetatable({}, {__mode = "k"})
 
@@ -3213,68 +3213,69 @@ end
 
 
 local function UpdateScooterMotion(scooter, dt)
-    if not scooter or not IsUsingScooter(scooter) then
-        spinRoot = nil
-        spinBaseRotation = nil
-        spinAngle = 0
-        lastSpinState = false
-        return
-    end
+    if not scooter or not scooter:IsA("Model") or not scooter.Parent then return end
 
-    local root = FindScooterRoot(scooter)
-    if not root then return end
+    local usingScooter = IsUsingScooter(scooter)
+    local shouldTransform = usingScooter
+        and (Settings.Scooter.Spin or Settings.Scooter.AutoWheelie)
+    local pivot = scooter:GetPivot()
 
-    local camera = Workspace.CurrentCamera
-    dt = math.clamp(dt, 0, 1 / 20)
-
-    if Settings.Scooter.SpeedEnabled and not Settings.Scooter.Fly then
-        root.CFrame = root.CFrame + root.CFrame.LookVector * Settings.Scooter.Speed * dt
-    end
-
-    if Settings.Scooter.Fly and camera then
-        local direction = Vector3.zero
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction += camera.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction -= camera.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction += camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction -= camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then direction += Vector3.yAxis end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= Vector3.yAxis end
-        if direction.Magnitude > 0 then
-            root.CFrame = root.CFrame + direction.Unit * Settings.Scooter.FlySpeed * dt
-        end
-    end
-
-    local shouldTransform = Settings.Scooter.Spin or Settings.Scooter.AutoWheelie
-    if shouldTransform and scooter:IsA("Model") then
-        if spinRoot ~= root or not spinBaseRotation then
-            spinRoot = root
-            local initialPivot = scooter:GetPivot()
-            spinBaseRotation = initialPivot - initialPivot.Position
+    if shouldTransform then
+        if spinScooter ~= scooter or not spinBaseRotation then
+            spinScooter = scooter
+            spinBaseRotation = pivot - pivot.Position
             spinAngle = 0
         end
+    elseif transformWasActive and spinScooter == scooter and spinBaseRotation then
+        -- Restore the captured orientation when spin/wheelie is switched off.
+        scooter:PivotTo(CFrame.new(pivot.Position) * spinBaseRotation)
+        pivot = scooter:GetPivot()
+        spinScooter = nil
+        spinBaseRotation = nil
+        spinAngle = 0
+    end
+    transformWasActive = shouldTransform
 
+    if not usingScooter then return end
+
+    dt = math.clamp(dt, 0, 1 / 20)
+    local position = pivot.Position
+    local rotation = pivot - position
+
+    if Settings.Scooter.Fly then
+        local camera = Workspace.CurrentCamera
+        if camera then
+            local direction = Vector3.zero
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction += camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction -= camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction += camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction -= camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then direction += Vector3.yAxis end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= Vector3.yAxis end
+            if direction.Magnitude > 0 then
+                position += direction.Unit * Settings.Scooter.FlySpeed * dt
+            end
+        end
+    elseif Settings.Scooter.SpeedEnabled then
+        position += rotation.LookVector * Settings.Scooter.Speed * dt
+    end
+
+    if shouldTransform then
         if Settings.Scooter.Spin then
             local sign = Settings.Scooter.SpinDirection == "Counter-clockwise" and -1 or 1
             spinAngle = (spinAngle + math.rad(Settings.Scooter.SpinSpeed) * dt * sign) % (math.pi * 2)
-        elseif lastSpinState then
+        else
             spinAngle = 0
         end
-        lastSpinState = Settings.Scooter.Spin
 
-        -- Build one absolute rotation from the captured starting orientation,
-        -- then PivotTo once. Two separate writes per frame were a major source
-        -- of the spin/wheelie fighting each other and visibly shaking.
-        local rotation = CFrame.Angles(0, spinAngle, 0) * spinBaseRotation
+        rotation = CFrame.Angles(0, spinAngle, 0) * spinBaseRotation
         if Settings.Scooter.AutoWheelie then
-            rotation = rotation * CFrame.Angles(-math.rad(Settings.Scooter.WheelieAngle), 0, 0)
+            rotation *= CFrame.Angles(-math.rad(Settings.Scooter.WheelieAngle), 0, 0)
         end
-        local pivot = scooter:GetPivot()
-        scooter:PivotTo(CFrame.new(pivot.Position) * rotation)
-    else
-        spinRoot = nil
-        spinBaseRotation = nil
-        spinAngle = 0
-        lastSpinState = false
+    end
+
+    if position ~= pivot.Position or shouldTransform then
+        scooter:PivotTo(CFrame.new(position) * rotation)
     end
 end
 
